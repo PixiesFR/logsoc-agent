@@ -1,0 +1,57 @@
+LOGSOC-AI AGENT v3.2.2 — INSTALLATION GUIDE
+==========================================
+
+PREREQUISITES
+-------------
+• Debian 12+ / Ubuntu 22.04+
+• libcurl4, libssl3, libpcap0.8
+• systemd
+• root pour setcap cap_net_raw (module réseau)
+
+INSTALLATION (.deb)
+-------------------
+sudo dpkg -i logsoc-agent_3.2.2_amd64.deb
+sudo apt-get install -f   # résoudre dépendances si besoin
+
+POST-INSTALL
+------------
+1. Éditer /etc/logsoc-agent/config.json :
+   {
+     "central_url": "https://logsoc.yourdomain.com",
+     "hostname": "serveur-prod-01",
+     "module_network": true,
+     "network": {
+       "interfaces": ["eth0"],
+       "bpf_filter": "port 443 or port 80"
+     },
+     "scan_paths": ["/var/log/auth.log", "/var/log/syslog"]
+   }
+
+2. Démarrer :
+   sudo systemctl start logsoc-agent
+   sudo systemctl enable logsoc-agent
+
+MODULE RESEAU
+-------------
+• module_network=true NÉCESSITE root OU setcap cap_net_raw
+• Sur Debian : le postinst fait automatiquement setcap
+• Sur systemd : AmbientCapabilities=CAP_NET_RAW
+• IoT = false par défaut (flash/RAM limités)
+
+SURVEILLANCE
+------------
+   sudo journalctl -u logsoc-agent -f
+   sudo systemctl status logsoc-agent
+
+FICHIERS CLÉS
+-------------
+/etc/logsoc-agent/config.json    Config agent
+/var/lib/logsoc-agent/wal/       WAL chiffré local
+/var/lib/logsoc-agent/auth.json  Secrets (créé au register)
+/var/lib/logsoc-agent/pending.json État pending (créé au register)
+/var/log/logsoc-agent/           Logs agent
+
+DÉSINSTALLATION
+----------------
+sudo dpkg -r logsoc-agent
+sudo rm -rf /var/lib/logsoc-agent /var/log/logsoc-agent

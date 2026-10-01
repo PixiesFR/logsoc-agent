@@ -1,0 +1,3 @@
+/etc/logsoc-agent/config.json
+/lib/systemd/system/logsoc-agent.service
+/etc/apparmor.d/usr.bin.logsoc-agent

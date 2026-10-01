@@ -1,0 +1,36 @@
+# Build output
+packaging/build-deb/
+packaging/rpm/BUILD/
+packaging/rpm/BUILDROOT/
+packaging/rpm/RPMS/
+packaging/rpm/SRPMS/
+releases/
+*.rpm
+*.deb
+*.o
+
+# Staging binaries (built from packaging/ sources)
+packaging/debian/usr/bin/
+
+# Local test files
+src/auth.json
+src/pending.json
+src/config_network.json
+src/ebpf/vmlinux.h
+static_soc_agent
+src/static_soc_agent
+src/soc_agent
+
+# T77_eicar test tools (build artefacts, source is in src/tools/)
+src/compile_yara_rule
+src/load_and_scan
+
+# CMake build directory
+build/
+
+# T13.4: local build artifacts
+src/static_soc_agent
+src/soc_agent
+src/agent
+src/ebpf/*.bpf.o
+releases/

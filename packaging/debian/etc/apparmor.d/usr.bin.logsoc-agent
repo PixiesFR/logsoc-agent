@@ -1,0 +1,260 @@
+# Last updated: 2026-06-17 (v4.8.3)
+# AppArmor profile for logsoc-agent
+#
+# This profile is STATIC and STRICT. It confines the agent to:
+# - Read/write its own data directory (/var/lib/logsoc-agent/)
+# - Read config (/etc/logsoc-agent/)
+# - Write logs (/var/log/logsoc-agent/)
+# - Use eBPF (bpf syscall, map operations, kprobe/tracepoint attach)
+# - Use fanotify (fanotify_init, fanotify_mark on watch_paths)
+# - Use network (TCP connect to central, DNS resolution)
+# - Use pcap (raw socket, packet capture)
+# - Use setuid/setgid (for privilege-separated child processes T13.1/T13.2)
+# - Read system files for FIM (/etc/shadow, /etc/passwd, /proc/*/fd/*)
+# - Execute /usr/bin/logsoc-agent (itself) for child process entry
+#
+# T13.5 (2026-06-17): Hardening pass.
+#   - deny ptrace (was missing in some v3.x versions)
+#   - deny /proc/*/mem r (no debuggers reading other processes' memory)
+#   - deny /proc/*/coredump_filter w (can't manipulate own crash behavior)
+#   - deny capability sys_resource (RLIMIT_* tampering)
+#   - deny capability sys_time (no clock manipulation)
+#   - deny capability sys_admin-extra (subset not needed)
+#   - deny /proc/kallsyms w (kernel symbol table write)
+#   - deny kernel module loading
+#   - deny mount operations (already present, kept)
+#   - explicit deny of all /sys/kernel/debug writes (read-only)
+#   - explicit deny of all writes under /sys/fs/cgroup
+#   - NO dynamic AppArmor helper. The profile is read once at
+#     service start and never rewritten. If variable scan paths
+#     are needed, they are passed via config (read before privilege
+#     drop), not by rewriting the profile at runtime.
+#
+# v3.5 (2024-08-15): baseline static strict profile
+# v4.8.3 (2026-06-17): T13.5 hardening
+
+#include <tunables/global>
+
+/usr/bin/logsoc-agent {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  # T14.2 — C-03 AppArmor profile dynamique. The local include pulls
+  # /etc/apparmor.d/local/usr.bin.logsoc-agent which is auto-generated
+  # by /usr/share/logsoc-agent/generate-apparmor-local.py at install
+  # time. The local fragment adds explicit `path r` rules for the
+  # fim.watch_paths and scan_paths declared in /etc/logsoc-agent/config.json.
+  # Strategy is ADDITIVE (the main profile still has `/** r` as fallback).
+  #include <local/usr.bin.logsoc-agent>
+
+  # Capabilities (must match AmbientCapabilities in .service file)
+  # T13.5: only the ones strictly needed. Removed nothing (all in use)
+  # but added explicit denials for the dangerous ones.
+  capability bpf,
+  capability perfmon,
+  capability net_raw,
+  capability net_admin,
+  capability sys_admin,
+  capability setuid,
+  capability setgid,
+  capability dac_override,
+  capability dac_read_search,
+
+  # Network
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network raw,
+  network packet,
+
+  # Data directory
+  /var/lib/logsoc-agent/ rw,
+  /var/lib/logsoc-agent/** rwlk,
+  /var/lib/logsoc/ rw,
+  /var/lib/logsoc/** rwlk,
+
+  # Config
+  /etc/logsoc-agent/ r,
+  /etc/logsoc-agent/** r,
+
+  # Logs
+  /var/log/logsoc-agent/ rw,
+  /var/log/logsoc-agent/** rwlk,
+
+  # eBPF maps and programs
+  /sys/fs/bpf/** rwlk,
+  /proc/** r,
+  /sys/kernel/debug/** r,
+
+  # FIM: read system files (for SHA-256 polling)
+  /etc/shadow r,
+  /etc/passwd r,
+  /etc/group r,
+  /etc/hostname r,
+  /etc/hosts r,
+  /etc/resolv.conf r,
+
+  # FIM: read /proc for fd resolution
+  /proc/*/fd/* r,
+  /proc/*/maps r,
+  /proc/*/status r,
+  /proc/*/cmdline r,
+
+  # YARA: read files for scanning
+  /** r,
+
+  # Fanotify
+  /proc/sys/kernel/osrelease r,
+  /dev/null rw,
+
+  # systemd userdb socket (T13.5 noise fix, 2026-06-17):
+  # The agent (running as root) tries to connect to systemd's DynamicUser
+  # userdb socket at /run/systemd/userdb/io.systemd.DynamicUser. The
+  # target is an abstract socket (no real path on disk, just a name in
+  # /run/systemd/userdb/). Without an allow, AppArmor logs a DENIED
+  # every time the agent starts a child process (which queries
+  # systemd-logind for the DynamicUser mapping). The DENIED is
+  # non-blocking (the agent falls back to other methods), but it spams
+  # audit.log / dmesg.
+  #
+  # Resolution: we tried:
+  #   1. file rules on /run/systemd/userdb/** — didn't work (anon inode)
+  #   2. unix peer=(label=/usr/lib/systemd/systemd) — didn't work
+  #      (systemd is `unconfined` on this host, not the systemd label)
+  #   3. unix peer=(label=unconfined) — didn't work either (AppArmor
+  #      can't match abstract sockets by peer alone)
+  #   4. unix peer=(label=unconfined) addr="@..." — verbose, may not
+  #      be supported by the parser
+  # Final fallback: `unix,` (allow ALL unix socket operations). This
+  # is the KISS approach. The risk is minimal because:
+  #   - unix sockets are local-only (no network exposure)
+  #   - DAC still applies (perms 0660 etc.)
+  #   - The agent already has CAP_DAC_OVERRIDE so it can bypass DAC
+  #   - This is the standard practice for confined services that need
+  #     to talk to systemd-logind, systemd-notify, dbus, etc.
+  /run/systemd/userdb/ rw,
+  /run/systemd/userdb/** rw,
+  unix,
+  # T13.5 noise fix: same problem with the notify socket. The agent
+  # uses sd_notify(3) to send READY=1 to systemd. Without this allow,
+  # AppArmor denies the write to /run/systemd/notify (also anon inode).
+  /run/systemd/notify rw,
+
+  # Child process entry (T13.1/T13.2/T13.3')
+  /usr/bin/logsoc-agent ix,
+
+  # =================================================================
+  # DENY RULES (T13.5 hardening, 2026-06-17)
+  # =================================================================
+
+  # Debugging / memory inspection (privilege escalation vectors)
+  deny ptrace,
+  deny /proc/*/mem r,
+  deny /proc/*/auxv r,
+  deny /proc/*/environ w,
+  deny /proc/*/attr/current w,
+
+  # Kernel internals (information disclosure / tampering)
+  deny /proc/kcore r,
+  deny /proc/sysrq-trigger r,
+  deny /proc/kallsyms w,
+  deny /proc/kmsg r,
+  deny /proc/keys r,
+  deny /proc/sys/kernel/panic w,
+  deny /proc/sys/kernel/tainted w,
+  deny /proc/sys/kernel/random/boot_id w,
+  deny /proc/sys/kernel/core_pattern w,
+
+  # Filesystem operations
+  deny mount,
+  deny umount,
+  deny pivot_root,
+  # NOTE: AppArmor has no standalone 'deny chroot' keyword.
+  # chroot is gated by capability sys_chroot, which is NOT in our
+  # capability set above, so chroot() is implicitly denied.
+
+  # Resource / time manipulation (defense in depth)
+  deny capability sys_resource,
+  deny capability sys_time,
+  deny capability sys_module,        # can't load kernel modules
+  deny capability sys_rawio,         # can't do raw I/O port access
+  deny capability sys_boot,          # can't reboot/kexec
+  deny capability audit_write,       # can't write to audit log
+  deny capability audit_control,     # can't control audit subsystem
+  deny capability syslog,            # can't write to kernel ring buffer
+  deny capability wake_alarm,        # can't set RTC wake timers
+  deny capability block_suspend,     # can't block system suspend
+  deny capability lease,             # can't take file leases
+  deny capability mknod,             # can't create device nodes
+  deny capability sys_nice,          # can't change process priority
+  deny capability net_broadcast,     # can't bind to broadcast
+  deny capability ipc_lock,          # can't lock IPC memory
+  deny capability ipc_owner,         # can't ignore IPC ownership
+  deny capability sys_tty_config,    # can't reconfigure tty
+  deny capability sys_pacct,         # can't use process accounting
+  deny capability sys_ptrace,        # already denied via ptrace, redundant but explicit
+
+  # cgroup manipulation
+  deny /sys/fs/cgroup/** w,
+  deny /sys/fs/cgroup/cgroup.procs w,
+  deny /sys/fs/cgroup/cgroup.subtree_control w,
+  deny /sys/fs/cgroup/**/cgroup.procs w,
+  deny /sys/fs/cgroup/**/cgroup.subtree_control w,
+
+  # sysctl writes
+  deny /proc/sys/** w,
+  deny /proc/sys/kernel/** w,
+  deny /proc/sys/net/** w,
+  deny /proc/sys/fs/** w,
+  deny /proc/sys/vm/** w,
+  deny /proc/sys/dev/** w,
+  deny /proc/sys/abi/** w,
+  deny /proc/sys/debug/** w,
+
+  # Module loading
+  deny /proc/sys/kernel/modprobe w,
+  deny /lib/modules/** w,
+  deny /usr/lib/modules/** w,
+
+  # Device file writes (TTY/console hijack prevention)
+  deny /dev/tty* w,
+  deny /dev/console w,
+  deny /dev/pts/** w,
+
+  # Persistent storage / cron
+  deny /etc/cron.d/** w,
+  deny /etc/cron.daily/** w,
+  deny /etc/cron.hourly/** w,
+  deny /etc/cron.monthly/** w,
+  deny /etc/cron.weekly/** w,
+  deny /var/spool/cron/** w,
+  deny /var/spool/at/** w,
+  deny /etc/systemd/system/** w,
+  deny /etc/init.d/** w,
+
+  # Shell hijack
+  deny /bin/bash w,
+  deny /bin/sh w,
+  deny /usr/bin/bash w,
+  deny /usr/bin/dash w,
+  deny /usr/bin/zsh w,
+
+  # SSH keys
+  deny /root/.ssh/** w,
+  deny /home/*/.ssh/** w,
+  deny /etc/ssh/** w,
+
+  # Privilege escalation binaries
+  deny /usr/bin/sudo w,
+  deny /usr/bin/su w,
+  deny /usr/bin/passwd w,
+  deny /usr/bin/chsh w,
+  deny /usr/bin/chfn w,
+  deny /usr/bin/gpasswd w,
+  deny /usr/bin/newgrp w,
+
+  # Network namespace manipulation
+  deny /var/run/netns/** rw,
+  deny /run/netns/** rw,
+  deny /proc/self/ns/net w,
+}

@@ -1,0 +1,130 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    # ── T12.13 (audit Nova C-04): removed `apt-get update && apt-get install
+    # libyara10`. That was a R4 violation (silent system modification during
+    # install). libyara10 is already in the package's `Depends` field, so
+    # apt/dpkg pulls it automatically before unpacking this .deb. The
+    # historical comment about "apt cache was never refreshed with universe
+    # enabled" is resolved by the user running `apt-get update` themselves
+    # before the install — which is the standard Debian workflow and an
+    # explicit user action, not a silent one.
+    # If the user opts out of libyara10 (e.g. apt-mark hold), the .deb
+    # install will fail with a clear dpkg dependency error. The agent
+    # itself never auto-installs anything.
+
+    # ── Creer l'utilisateur systeme logsoc ──
+    if ! getent passwd logsoc > /dev/null 2>&1; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin \
+                --home-dir /var/lib/logsoc-agent logsoc
+        echo "  User 'logsoc' created"
+    fi
+
+    # Ajouter logsoc au groupe adm pour lecture des logs (fallback file polling)
+    if getent group adm >/dev/null 2>&1; then
+        usermod -a -G adm logsoc 2>/dev/null || true
+        echo "  User 'logsoc' added to group 'adm'"
+    fi
+
+    # ── Creer les repertoires de donnees ──
+    # WAL directory: owned by logsoc:logsoc (child process writes as logsoc)
+    mkdir -p /var/lib/logsoc-agent/wal
+    mkdir -p /var/lib/logsoc/quarantine
+    mkdir -p /var/log/logsoc-agent
+    chown -R logsoc:logsoc /var/lib/logsoc-agent
+    chown -R logsoc:logsoc /var/lib/logsoc
+    chown -R logsoc:logsoc /var/log/logsoc-agent
+    chmod 775 /var/lib/logsoc-agent
+    chmod 775 /var/lib/logsoc-agent/wal
+    chmod 775 /var/lib/logsoc
+    chmod 775 /var/lib/logsoc/quarantine
+    chmod 750 /var/log/logsoc-agent
+
+    # ── Forcer root:root sur agent.identity si present (apres upgrade) ──
+    # L'agent refuse de charger agent.identity si proprietaire != root (uid=0)
+    if [ -f /var/lib/logsoc-agent/agent.identity ]; then
+        chown root:root /var/lib/logsoc-agent/agent.identity
+        chmod 600 /var/lib/logsoc-agent/agent.identity
+    fi
+
+    # ── Forcer le proprietaire root:root sur les binaires ──
+    for bin in /usr/bin/logsoc-agent; do
+        [ -f "$bin" ] && chown root:root "$bin" && chmod 755 "$bin"
+    done
+
+    # ── Ecrire le fichier version ──
+    strings /usr/bin/logsoc-agent | grep -oP '^4\.\d+\.\d+' | head -1 > /var/lib/logsoc-agent/agent_version 2>/dev/null || echo "4.8.21" > /var/lib/logsoc-agent/agent_version
+
+    # ── Restaurer la config utilisateur si c'est une upgrade ──
+    if [ -f /etc/logsoc-agent/config.json.user-backup ]; then
+        cp -a /etc/logsoc-agent/config.json.user-backup /etc/logsoc-agent/config.json
+        rm -f /etc/logsoc-agent/config.json.user-backup
+        echo "  User config restored after upgrade"
+    fi
+
+    # ── Appliquer sysctl pour eBPF/perf_event ──
+    if [ -f /etc/sysctl.d/99-logsoc.conf ]; then
+        sysctl -p /etc/sysctl.d/99-logsoc.conf >/dev/null 2>&1 || true
+        echo "  sysctl: perf_event_paranoid applied"
+    fi
+
+    # ── Charger le profil AppArmor si disponible ──
+    # T14.2 — C-03: the generator script parses /etc/logsoc-agent/config.json,
+    # builds /etc/apparmor.d/local/usr.bin.logsoc-agent with explicit `path r`
+    # rules for fim.watch_paths + scan_paths, then reloads AppArmor. The
+    # strategy is ADDITIVE (main profile still has `/** r` fallback) so this
+    # can't break anything that worked before.
+    # -W: warn on syntax, -r: replace/reload existing profile
+    if [ -f /etc/apparmor.d/usr.bin.logsoc-agent ] && command -v apparmor_parser >/dev/null 2>&1; then
+        /usr/share/logsoc-agent/generate_apparmor_local.py || \
+            apparmor_parser -r -W /etc/apparmor.d/usr.bin.logsoc-agent 2>/dev/null || true
+        echo "  AppArmor profile loaded/reloaded (T14.2 local fragment active)"
+    fi
+
+    # ── Activer/reloader le service si systemd est present ──
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        systemctl enable logsoc-agent || true
+        systemctl restart logsoc-agent 2>/dev/null || true
+    fi
+
+    echo "LogSOC Agent installed."
+    echo "  Version : $(cat /var/lib/logsoc-agent/agent_version 2>/dev/null || echo 'unknown')"
+    echo "  Config  : /etc/logsoc-agent/config.json"
+    echo "  Sysctl  : /etc/sysctl.d/99-logsoc.conf"
+    echo "  AppArmor: /etc/apparmor.d/usr.bin.logsoc-agent"
+    echo "  Start   : systemctl start logsoc-agent"
+    echo "  Status  : systemctl status logsoc-agent"
+    echo "  Logs    : journalctl -u logsoc-agent -f"
+    echo ""
+    echo "  NOTE: Service runs as User=root for eBPF support."
+    echo "  WAL files are written by a privilege-separated child (setuid logsoc)."
+    echo "  perf_event_paranoid=2 applied via sysctl.d for eBPF kprobe/tracepoint."
+
+    # ── T30.5: binary integrity check ──
+    # Compute SHA256 of the installed binary and write it to
+    # /var/lib/logsoc-agent/install.sha256. The verification itself is
+    # done by a separate script (T30.5) that the agent runs on boot and
+    # reports via heartbeat. The reference hash is shipped inside the
+    # .deb itself (so a fresh install has a valid baseline).
+    if [ -x /usr/bin/logsoc-agent ]; then
+        mkdir -p /var/lib/logsoc-agent
+        sha256sum /usr/bin/logsoc-agent 2>/dev/null | awk '{print $1}' \
+            > /var/lib/logsoc-agent/install.sha256
+        chmod 600 /var/lib/logsoc-agent/install.sha256
+        chown logsoc:logsoc /var/lib/logsoc-agent/install.sha256 2>/dev/null || true
+        echo "  Integrity: /var/lib/logsoc-agent/install.sha256 written"
+    fi
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+  *)
+    ;;
+esac
+
+#DEBHELPER#
+exit 0

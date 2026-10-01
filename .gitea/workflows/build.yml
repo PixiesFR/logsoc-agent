@@ -1,0 +1,148 @@
+# Gitea Actions workflow for LogSOC Agent v4.8.x
+#
+# Runs on:
+#   - every push to main
+#   - every pull request to main
+#
+# Pipeline:
+#   1. Build static agent binary (make static_soc_agent)
+#   2. Run unit tests (make -C tests test)
+#   3. Run memory safety CI (make -C tests ci-memcheck) — ASan + valgrind
+#   4. Build .deb package
+#   5. Upload .deb as a workflow artifact (downloadable from the run page)
+#
+# Future (T4.8.14 follow-up):
+#   - Add GPG signing of the .deb
+#   - Add auto-deploy to a Hestia staging bucket (no production push from CI)
+#   - Add libFuzzer smoke test (clang-only, ~10s)
+
+name: LogSOC Agent CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-test-deb:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for version detection
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            g++ \
+            clang \
+            libpcap-dev \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            libsystemd-dev \
+            libelf-dev \
+            zlib1g-dev \
+            libyara-dev \
+            pkg-config \
+            valgrind \
+            dpkg-dev \
+            fakeroot
+
+      - name: Show toolchain versions
+        run: |
+          g++ --version | head -1
+          clang++ --version | head -1
+          pkg-config --modversion yara
+          valgrind --version
+
+      - name: Build static agent binary
+        run: |
+          cd src
+          make clean
+          make static_soc_agent -j$(nproc)
+          ls -la static_soc_agent
+
+      - name: Run unit tests
+        run: |
+          # We do not run the full test-e2e (it needs root + /proc), but
+          # the unit tests pass on a stock Ubuntu runner.
+          cd src
+          make tests
+          # tests/Makefile needs to be invoked from the repo root
+          make -C ../tests test-mitre test-cb test-fd test-fim test-metrics test-memcheck
+
+      - name: Run policy validation tests (T4.8.11)
+        run: |
+          g++ -std=c++17 -O0 -g -Wall -pthread -Isrc \
+              -o /tmp/test_policy_validation_t4_8_11 \
+              tests/test_policy_validation_t4_8_11.cpp
+          /tmp/test_policy_validation_t4_8_11
+          # Memory safety on the test itself
+          g++ -std=c++17 -O0 -g -Wall -pthread -Isrc -fsanitize=address -fno-omit-frame-pointer \
+              -o /tmp/test_policy_validation_asan \
+              tests/test_policy_validation_t4_8_11.cpp
+          ASAN_OPTIONS=detect_leaks=1 /tmp/test_policy_validation_asan
+
+      - name: Run FimMetrics net_* tests (T4.8.9)
+        run: |
+          g++ -std=c++17 -O0 -g -Wall -pthread -Isrc \
+              -o /tmp/test_fim_metrics_net_t4_8_9 \
+              tests/test_fim_metrics_net_t4_8_9.cpp src/agent/fim_metrics.cpp
+          /tmp/test_fim_metrics_net_t4_8_9
+
+      - name: Run ci-memcheck gate
+        run: |
+          bash scripts/ci-memcheck.sh
+
+      - name: Build .deb package
+        run: |
+          # Use git short SHA + branch as version
+          VERSION="4.8.0-ci-${GITHUB_SHA::7}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          echo "Building .deb version=${VERSION}"
+          VERSION="${VERSION}" bash packaging/scripts/build-deb.sh
+          # Move to a known location for upload
+          mkdir -p artifacts
+          cp packaging/logsoc-agent_${VERSION}_amd64.deb artifacts/ 2>/dev/null || \
+            cp packaging/logsoc-agent_${VERSION%-*}_amd64.deb artifacts/ 2>/dev/null || \
+            ls -la packaging/*.deb
+          # The build-deb.sh script uses the VERSION env var literally, so
+          # the resulting .deb name is logsoc-agent_${VERSION}_amd64.deb.
+          # Pick the one we just built:
+          cp $(ls -t packaging/logsoc-agent_*_amd64.deb | head -1) artifacts/
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logsoc-agent-deb
+          path: artifacts/logsoc-agent_*.deb
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload static binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logsoc-agent-binary
+          path: src/static_soc_agent
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: CI summary
+        if: always()
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Agent binary: $(ls -la src/static_soc_agent 2>/dev/null | awk '{print $5}') bytes" >> $GITHUB_STEP_SUMMARY
+          echo "- .deb package: $(ls -la artifacts/*.deb 2>/dev/null | awk '{print $5}') bytes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All gates PASSED. .deb available as workflow artifact." >> $GITHUB_STEP_SUMMARY

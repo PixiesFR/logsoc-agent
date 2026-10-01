@@ -1,0 +1,8 @@
+{
+  "_comment": "T13.3' rules allowlist. Pre-approved rule IDs that the action recommender child can recommend. Edit this list to add/remove rules. Empty list = no actions possible (fail-closed). Each rule should be signed by the backend in production (HMAC verification before agent load).",
+  "rules": [
+    "yara_critical_binary",
+    "sigma_reverse_shell",
+    "severity_critical_default"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "_comment": "T13.3' action allowlist. Action types that the validator will allow. 'kill_pid' is the only one wired in T13.3' MVP. 'block_ip' and 'quarantine_file' are reserved for future work. Empty list = no actions possible (fail-closed).",
+  "actions": [
+    "kill_pid"
+  ]
+}

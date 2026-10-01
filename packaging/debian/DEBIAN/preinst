@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  upgrade|install)
+    # Arrêter le service s'il tourne avant de toucher aux fichiers
+    if [ -d /run/systemd/system ]; then
+        systemctl stop logsoc-agent 2>/dev/null || true
+    fi
+
+    # Sauvegarder la config utilisateur si elle existe (upgrade)
+    if [ -f /etc/logsoc-agent/config.json ]; then
+        cp -a /etc/logsoc-agent/config.json /etc/logsoc-agent/config.json.user-backup
+        echo "  [preinst] user config backed up"
+    fi
+    ;;
+  *)
+    ;;
+esac
+
+exit 0

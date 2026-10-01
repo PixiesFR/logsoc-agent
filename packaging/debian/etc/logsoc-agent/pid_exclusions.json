@@ -1,0 +1,4 @@
+{
+  "_comment": "T13.3' PID exclusion list. PIDs in this list are NEVER killed, even if a critical rule recommends it. Empty list = no manual exclusions (PID 1, kernel threads, and the agent's own PID are always excluded by hardcoded logic). Add specific PIDs (e.g., database processes, monitoring agents) here.",
+  "pids": []
+}

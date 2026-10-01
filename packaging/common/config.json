@@ -1,0 +1,79 @@
+{
+  "version": "3.5.0",
+  "hostname": "",
+  "central_url": "https://logsoc.anytimeadmin.info",
+  "module_network": false,
+  "module_ebpf": true,
+  "module_journald": true,
+  "network": {
+    "interfaces": ["eth0"],
+    "bpf_filter": "",
+    "snaplen": 65535,
+    "batch_interval_ms": 5000,
+    "payload_preview_bytes": 256
+  },
+  "ebpf": {
+    "poll_interval_ms": 100,
+    "rate_limit_per_pid": 100,
+    "redact_patterns": ["password=", "passwd=", "secret=", "token=", "api_key=", "Authorization:"]
+  },
+  "enabled_probes": {
+    "write": false,
+    "execve": true,
+    "tcp_connect": true,
+    "fim": true,
+    "open": true,
+    "unlink": true
+  },
+  "local_filters": {
+    "connect": {
+      "ignore_ports": ["80", "443"],
+      "ignore_ips": ["127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    },
+    "execve": {
+      "ignore_comm": ["systemd", "cron", "bash", "sh", "sshd"]
+    },
+    "open": {
+      "ignore_paths": ["/proc/", "/sys/", "/dev/", "/tmp/"],
+      "ignore_flags": ["O_RDONLY"]
+    },
+    "unlink": {
+      "ignore_paths": ["/tmp/", "/var/tmp/"]
+    }
+  },
+  "fim": {
+    "watch_paths": ["/etc/ssh/sshd_config", "/etc/passwd", "/etc/shadow", "/etc/sudoers", "/etc/crontab", "/etc/ssh/ssh_config", "/etc/hosts", "/etc/resolv.conf", "/etc/hostname", "/etc/pam.d/", "/etc/security/", "/etc/sudoers.d/", "/etc/cron.d/", "/etc/cron.daily/", "/etc/cron.hourly/", "/var/spool/cron/", "/root/.bashrc", "/root/.ssh/authorized_keys", "/root/.ssh/known_hosts", "/home/"],
+    "ignore_paths": ["/proc/", "/sys/", "/dev/"]
+  },
+  "fanotify_enabled": true,
+  "heartbeat": {
+    "interval_sec": 60
+  },
+  "severity_map": {
+    "write": "info",
+    "execve": "notice",
+    "tcp_connect": "notice",
+    "fim": "info",
+    "open": "info",
+    "unlink": "warning",
+    "journald": "info"
+  },
+  "journald_exclude_ids": ["logsoc-agent"],
+  "scan_paths": [
+    "/var/log/auth.log",
+    "/var/log/syslog"
+  ],
+  "batch_interval_sec": 30,
+  "batch_max_lines": 500,
+  "hmac_window_sec": 60,
+  "storage": {
+    "directory": "/var/lib/logsoc-agent/wal",
+    "segment_max_size_mb": 10,
+    "segment_max_age_sec": 300,
+    "max_total_size_mb": 100,
+    "wal_user": "logsoc",
+    "wal_group": "logsoc",
+    "rotation_max_files": 5
+  },
+  "data_dir": "/var/lib/logsoc-agent"
+}

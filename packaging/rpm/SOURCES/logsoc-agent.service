@@ -1,0 +1,49 @@
+[Unit]
+Description=LogSOC-AI Agent — privilege-separated WAL writer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/logsoc-agent /etc/logsoc-agent/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=logsoc-agent
+
+LimitMEMLOCK=infinity
+
+# Capabilities for eBPF + network capture + fanotify (v3.10.1) +
+# privilege-separated child processes (T13).
+#
+# - CAP_SYS_ADMIN is required for fanotify_init(2) which gives the absolute
+#   path on FIM events (replaces the basename-only kprobe/vfs_write approach).
+#   Combined with the AppArmor profile (capability sys_admin,) this is safe
+#   because the profile still constrains which paths/files the agent can touch.
+# - CAP_SETUID + CAP_SETGID: required by T13.1 (WalWriterProcess) and
+#   T13.2 (FimScannerProcess) child processes to drop privileges to
+#   logsoc:logsoc via setgroups(0) + setgid + setuid. Without these in
+#   Ambient, the child's setuid(logsoc) call returns EPERM.
+# - CAP_DAC_READ_SEARCH (T13.2d): added to Ambient so the FimScannerProcess
+#   child (logsoc:logsoc) inherits it across fork+setuid. It was already
+#   in the Bounding set but not in Ambient, which meant the child lost
+#   the cap on setuid. The child uses DAC_READ_SEARCH to read /etc/shadow
+#   and other mode-000 root-owned files for the SHA-256 poller fallback.
+#   See ticket: ~/.hermes/tickets/T13.2-fim-scanner-privilege-separation.md
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_NET_RAW CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_NET_RAW CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_SYS_ADMIN
+NoNewPrivileges=false
+
+# Hardening
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/logsoc-agent /var/lib/logsoc /var/log/logsoc-agent
+
+# Timeout: le polling pending peut durer > 90s
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

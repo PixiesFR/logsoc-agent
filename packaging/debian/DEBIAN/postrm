@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  remove)
+    # Rien de spécifique : le service est déjà arrêté par prerm
+    ;;
+  purge)
+    # Nettoyage complet des données utilisateur
+    echo "  [postrm] purging agent data..."
+    rm -rf /var/lib/logsoc-agent /var/log/logsoc-agent /etc/logsoc-agent
+    # Retirer le profil AppArmor si présent
+    if [ -f /etc/apparmor.d/usr.bin.logsoc-agent ] && command -v apparmor_parser >/dev/null 2>&1; then
+        apparmor_parser -R /etc/apparmor.d/usr.bin.logsoc-agent 2>/dev/null || true
+        rm -f /etc/apparmor.d/usr.bin.logsoc-agent
+    fi
+    # Supprimer l'utilisateur si demandé (purge)
+    if getent passwd logsoc >/dev/null 2>&1; then
+        userdel logsoc 2>/dev/null || true
+    fi
+    ;;
+esac
+
+exit 0

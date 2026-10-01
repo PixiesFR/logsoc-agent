@@ -1,0 +1,48 @@
+# valgrind suppressions for LogSOC Agent v4.8.x memory tests
+#
+# Usage:
+#   valgrind --suppressions=tests/valgrind.supp --leak-check=full /tmp/test_memcheck_sustained
+#
+# Add rules here ONLY for confirmed false positives in third-party libs
+# (libstdc++, glibc, libbpf, libyara) that we cannot fix ourselves.
+# Document WHY each suppression is needed (issue link, kernel version, etc.).
+
+# ---------------------------------------------------------------------------
+# glibc getdelim() false-positive on read-only EOF
+# glibc 2.41 internal buffer for getdelim() may be reported as still-reachable
+# in some versions when input stream is empty. Tracked in glibc bug 11941.
+# We don't call getdelim() in our test path, but stdio internals may.
+# ---------------------------------------------------------------------------
+{
+   glibc_stdio_getdelim_eof
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:getdelim
+}
+
+# ---------------------------------------------------------------------------
+# libstdc++ __cxxabiv1 static destructors on shutdown
+# Reported as "still reachable" by valgrind, but only in static initializers
+# that libstdc++ never tears down. Not a real leak.
+# ---------------------------------------------------------------------------
+{
+   libstdcxx_static_dtors
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:__cxa_finalize
+}
+
+# ---------------------------------------------------------------------------
+# libcurl global init (we link libcurl for HTTPS shipping, not used in
+# this test but loaded by static linker). curl_global_init() allocates
+# a thread-local state buffer that valgrind sees as still-reachable.
+# ---------------------------------------------------------------------------
+{
+   libcurl_global_init
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:curl_global_init
+}

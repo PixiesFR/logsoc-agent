@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# Arrêter et désactiver le service avant désinstallation
+if [ -n "$$DPKG_MAINTSCRIPT_PACKAGE" ] && [ -d /run/systemd/system ]; then
+    systemctl stop logsoc-agent 2>/dev/null || true
+    systemctl disable logsoc-agent 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
+#DEBHELPER#
+exit 0

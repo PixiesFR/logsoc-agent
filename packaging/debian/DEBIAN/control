@@ -1,0 +1,24 @@
+Package: logsoc-agent
+Version: 4.8.19
+Section: admin
+Priority: optional
+Architecture: amd64
+Depends: libc6 (>= 2.31), libcurl4 (>= 7.68) | libcurl3-gnutls, libssl3 (>= 3.0) | libssl1.1 (>= 1.1.1), libpcap0.8 (>= 1.9), libbpf1 (>= 1.3.0), libyara10 (>= 4.5), systemd
+Recommends: libcap2-bin, apparmor
+Suggests: logrotate
+Maintainer: Fabrice IT <fabrice@anytimeadmin.info>
+Description: LogSOC-AI SIEM Agent
+ Agent C++ pour collecte de logs systeme, capture reseau (libpcap),
+ YARA HQ (libyara 4.5+, 5 modes bitmask: file/memory/network/log),
+ ingestion chiffree (WAL AES-GCM + HMAC) vers le central LogSOC,
+ et sondes eBPF V4.2 via libbpf (kernel >= 5.x requis).
+ 6 sondes unifiees (write, execve, connect, fim, open, unlink),
+ ringbuf 4MB, self-exclusion PID, masquage args, rate-limit,
+ filtres locaux, queue bornee. Data dir: /var/lib/logsoc-agent.
+ .
+ v3.10.1: FanotifyCollector (FIM userspace via fanotify(7) with absolute paths; resolves bug where eBPF kprobe/vfs_write only had the basename). Opt-in via "fanotify_enabled": true; uses fim.watch_paths. Read-mark per-file + inode-to-path cache populated during the dir walk.
+ v3.10.0: YARA HQ (file scan on FIM/open via eBPF, central rule pull via HMAC-signed GET /api/v1/yara/active, match post via HMAC-signed POST /api/v1/yara/results).
+ Packaged with AppArmor profile (eBPF kprobe/tracepoint permissions),
+ sysctl.d drop-in (perf_event_paranoid=2 for BPF attachment),
+ and systemd service (User=root). v3.8.0: zero secret on disk — credentials live in RAM only (hashed re-auth via /api/v1/agents/{id}/activate), InMemoryBuffer for the normal path, encrypted FallbackWAL (AES-256-GCM) for API outages.
+Homepage: https://logsoc.anytimeadmin.info

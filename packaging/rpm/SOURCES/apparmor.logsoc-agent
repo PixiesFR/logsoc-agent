@@ -1,0 +1,48 @@
+#include <tunables/global>
+
+/usr/bin/logsoc-agent {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+
+  capability bpf,
+  capability perfmon,
+  capability net_raw,
+  capability setuid,
+  capability setgid,
+
+  /usr/bin/logsoc-agent mr,
+  /lib/x86_64-linux-gnu/lib*.so* mr,
+  /usr/lib/x86_64-linux-gnu/lib*.so* mr,
+  /usr/lib/lib*.so* mr,
+
+  /etc/logsoc-agent/config.json r,
+  /etc/logsoc-agent/** r,
+
+  /proc/** r,
+  /sys/kernel/btf/vmlinux r,
+  /sys/kernel/btf/** r,
+
+  /var/log/** r,
+
+  /var/lib/logsoc-agent/ rwk,
+  /var/lib/logsoc-agent/** rwk,
+
+  /var/log/logsoc-agent/ rw,
+  /var/log/logsoc-agent/** rw,
+
+  network inet stream,
+  network inet dgram,
+  network inet6 stream,
+
+  signal (send, receive),
+
+  /sys/fs/bpf/ r,
+  /sys/fs/bpf/** rw,
+  /sys/kernel/debug/ r,
+  /sys/kernel/debug/** rw,
+
+  /tmp/ r,
+  /tmp/** rw,
+}

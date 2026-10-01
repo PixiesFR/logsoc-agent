@@ -1,0 +1,40 @@
+[Unit]
+Description=LogSOC-AI Agent v3.5 — privilege-separated WAL writer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/logsoc-agent /etc/logsoc-agent/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=logsoc-agent
+
+LimitMEMLOCK=infinity
+
+# Capabilities for eBPF, network capture, and privilege separation (setuid).
+# T13.2d: CAP_DAC_READ_SEARCH added to AmbientCapabilities so the
+# FimScannerProcess child (logsoc:logsoc) inherits it across fork+setuid.
+# It was already in CapabilityBoundingSet but not in Ambient, which
+# meant the child lost the cap on setuid. The child uses DAC_READ_SEARCH
+# to read /etc/shadow and other mode-000 root-owned files for the
+# SHA-256 poller fallback. See ticket:
+#   ~/.hermes/tickets/T13.2-fim-scanner-privilege-separation.md
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+NoNewPrivileges=false
+
+# Hardening
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/logsoc-agent /var/lib/logsoc /var/log/logsoc-agent
+
+# Timeout: le polling pending peut durer > 90s
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target
