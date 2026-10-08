@@ -414,3 +414,7 @@ l'éditeur.
 **Mainteneur** : LogSOC-AI Engineering
 **Repo** : voir `git remote -v` dans votre clone
 **Issues** : voir le tracker de votre plateforme (Gitea / GitLab / GitHub)
+
+## Licence
+
+Ce projet est distribué sous licence **GNU AGPL-3.0** — voir [LICENSE](LICENSE).
